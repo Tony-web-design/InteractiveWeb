@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>互動競賽 - 客戶端</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", Arial; margin: 20px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; max-width: 540px; }
+    .row { display:flex; gap:8px; margin:8px 0; }
+    input, button { padding:8px 10px; border-radius:8px; border:1px solid #bbb; }
+    button { cursor:pointer; }
+    .leader { margin-top:16px; }
+    .pill { display:inline-block; padding:4px 8px; border-radius:999px; background:#f4f4f4; margin-right:6px; }
+  </style>
+</head>
+<body>
+  <h2>互動競賽（客戶端）</h2>
+  <div class="card">
+    <div class="row">
+      <input id="name" placeholder="輸入你的暱稱" />
+      <button id="btn-join">加入</button>
+      <button id="btn-rename" disabled>改名</button>
+    </div>
+    <div class="row">
+      <button id="btn-plus" disabled>+1</button>
+      <button id="btn-minus" disabled>-1</button>
+    </div>
+    <div id="info" style="margin-top:8px;color:#555;"></div>
+    <div class="leader">
+      <h3>即時結果</h3>
+      <div id="mode"></div>
+      <div id="board"></div>
+      <div id="online"></div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    const $name = document.getElementById('name');
+    const $join = document.getElementById('btn-join');
+    const $rename = document.getElementById('btn-rename');
+    const $plus = document.getElementById('btn-plus');
+    const $minus = document.getElementById('btn-minus');
+    const $info = document.getElementById('info');
+    const $mode = document.getElementById('mode');
+    const $board = document.getElementById('board');
+    const $online = document.getElementById('online');
+
+    let joined = false;
+
+    $join.onclick = () => {
+      socket.emit('client:join', { name: $name.value });
+      joined = true;
+      $info.textContent = '已加入比賽！';
+      $plus.disabled = false;
+      $minus.disabled = false;
+      $rename.disabled = false;
+      $join.disabled = true;
+    };
+
+    $rename.onclick = () => {
+      if (!joined) return;
+      socket.emit('client:rename', $name.value);
+      $info.textContent = '名稱已更新';
+    };
+
+    $plus.onclick = () => socket.emit('client:scoreDelta', +1);
+    $minus.onclick = () => socket.emit('client:scoreDelta', -1);
+
+    socket.on('state:update', (payload) => {
+      const { mode, leaderboard, onlineCount } = payload;
+      $mode.textContent = `目前模式：${mode === 'solo' ? '個人賽' : '分組賽'}`;
+      $online.textContent = `在線玩家：${onlineCount}`;
+
+      if (leaderboard.mode === 'solo') {
+        $board.innerHTML = leaderboard.players
+          .map(p => `<div class="pill">${p.name} — ${p.score}${p.team ? '（'+p.team+'）' : ''}</div>`)
+          .join('');
+      } else {
+        $board.innerHTML = leaderboard.teams
+          .map(t => `<div class="pill">隊伍 ${t.team} — ${t.score}</div>`)
+          .join('');
+      }
+    });
+  </script>
+</body>
+</html>

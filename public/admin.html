@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>互動競賽 - Admin</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", Arial; margin: 20px; }
+    .row { display:flex; flex-wrap: wrap; gap:8px; margin:8px 0; }
+    input, button, select { padding:8px 10px; border-radius:8px; border:1px solid #bbb; }
+    button { cursor:pointer; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:16px; margin-bottom:12px; max-width: 900px; }
+    table { border-collapse: collapse; width:100%; }
+    th, td { border:1px solid #ddd; padding:8px; text-align:left; }
+    .pill { display:inline-block; padding:4px 8px; border-radius:999px; background:#f2f2f2; margin-right:6px; }
+    .warn { color:#b00; }
+  </style>
+</head>
+<body>
+  <h2>互動競賽（Admin）</h2>
+
+  <div class="card">
+    <div class="row">
+      <input id="key" placeholder="Admin 金鑰（預設 letmein）" />
+      <button id="btn-auth">登入 Admin</button>
+      <span id="authState"></span>
+    </div>
+    <div class="row">
+      <label>模式：</label>
+      <button data-mode="solo" class="btn-mode" disabled>個人賽</button>
+      <button data-mode="group" class="btn-mode" disabled>分組賽</button>
+
+      <label>呈現：</label>
+      <select id="present" disabled>
+        <option value="rank">排名（預設）</option>
+        <option value="table">表格</option>
+      </select>
+    </div>
+    <div class="row">
+      <input id="teams" placeholder="輸入隊伍，用逗號分隔（例：A,B,C）" disabled />
+      <button id="btn-set-teams" disabled>設定隊伍</button>
+      <button id="btn-reset" disabled>所有人分數歸零</button>
+      <button id="btn-clear" disabled>清空所有玩家</button>
+    </div>
+    <div id="online"></div>
+    <div id="mode"></div>
+  </div>
+
+  <div class="card">
+    <h3>即時結果</h3>
+    <div id="board"></div>
+    <div id="table"></div>
+  </div>
+
+  <div class="card">
+    <h3>玩家列表（指派隊伍）</h3>
+    <div id="players"></div>
+    <p class="warn">提示：此示範未做權限強化，正式上線請加上更嚴格的 Auth 與 HTTPS。</p>
+  </div>
+
+  <script>
+    const socket = io();
+    const $btnAuth = document.getElementById('btn-auth');
+    const $key = document.getElementById('key');
+    const $authState = document.getElementById('authState');
+    const $btnModes = document.querySelectorAll('.btn-mode');
+    const $present = document.getElementById('present');
+    const $teams = document.getElementById('teams');
+    const $btnSetTeams = document.getElementById('btn-set-teams');
+    const $btnReset = document.getElementById('btn-reset');
+    const $btnClear = document.getElementById('btn-clear');
+    const $board = document.getElementById('board');
+    const $table = document.getElementById('table');
+    const $players = document.getElementById('players');
+    const $online = document.getElementById('online');
+    const $mode = document.getElementById('mode');
+
+    let authed = false;
+    let latestState = null;
+
+    function setAdminUIEnabled(enabled) {
+      $btnModes.forEach(b => b.disabled = !enabled);
+      $present.disabled = !enabled;
+      $teams.disabled = !enabled;
+      $btnSetTeams.disabled = !enabled;
+      $btnReset.disabled = !enabled;
+      $btnClear.disabled = !enabled;
+    }
+
+    $btnAuth.onclick = () => {
+      socket.emit('admin:auth', { adminKey: $key.value });
+    };
+
+    socket.on('admin:auth:ok', ({ ok }) => {
+      authed = !!ok;
+      $authState.textContent = ok ? 'Admin 驗證成功' : 'Admin 驗證失敗';
+      setAdminUIEnabled(authed);
+    });
+
+    $btnModes.forEach(btn => {
+      btn.onclick = () => {
+        if (!authed) return;
+        const mode = btn.getAttribute('data-mode');
+        socket.emit('admin:setMode', { mode });
+      };
+    });
+
+    $present.onchange = () => {
+      if (!authed) return;
+      socket.emit('admin:setPresentation', { type: $present.value });
+    };
+
+    $btnSetTeams.onclick = () => {
+      if (!authed) return;
+      const list = $teams.value.split(',').map(s => s.trim()).filter(Boolean);
+      socket.emit('admin:setTeams', { teamList: list });
+    };
+
+    $btnReset.onclick = () => {
+      if (!authed) return;
+      socket.emit('admin:resetScores');
+    };
+
+    $btnClear.onclick = () => {
+      if (!authed) return;
+      socket.emit('admin:clearPlayers');
+    };
+
+    // 畫面更新
+    socket.on('state:update', (payload) => {
+      latestState = payload;
+      const { mode, leaderboard, onlineCount, presentation } = payload;
+
+      $online.textContent = `在線玩家：${onlineCount}`;
+      $mode.textContent = `目前模式：${mode === 'solo' ? '個人賽' : '分組賽'}`;
+      $present.value = presentation || 'rank';
+
+      // 排名樣式（pill）
+      if (mode === 'solo') {
+        $board.innerHTML = leaderboard.players
+          .map(p => `<span class="pill">${p.name} — ${p.score}${p.team ? '（'+p.team+'）' : ''}</span>`)
+          .join('');
+        // 表格樣式（更清晰）
+        $table.innerHTML = `
+          <table>
+            <thead><tr><th>#</th><th>玩家</th><th>隊伍</th><th>分數</th></tr></thead>
+            <tbody>
+              ${leaderboard.players.map((p, idx) =>
+                `<tr><td>${idx+1}</td><td>${p.name}</td><td>${p.team || ''}</td><td>${p.score}</td></tr>`
+              ).join('')}
+            </tbody>
+          </table>`;
+      } else {
+        $board.innerHTML = leaderboard.teams
+          .map(t => `<span class="pill">隊伍 ${t.team} — ${t.score}</span>`)
+          .join('');
+        $table.innerHTML = `
+          <table>
+            <thead><tr><th>#</th><th>隊伍</th><th>總分</th></tr></thead>
+            <tbody>
+              ${leaderboard.teams.map((t, idx) =>
+                `<tr><td>${idx+1}</td><td>${t.team}</td><td>${t.score}</td></tr>`
+              ).join('')}
+            </tbody>
+          </table>`;
+      }
+
+      // 玩家列表（可指派隊伍）
+      // 注意：這裡沒有直接拿到玩家名單，為簡化示範，改由排名/表格推導
+      // 對於個人賽：從 leaderboard.players 取得清單
+      // 對於分組賽：僅有彙總，因此此示範在 group 模式暫用 players 自體不可見
+      // —— 簡化策略：在「個人賽」模式下提供指派功能（實務可擴充提供完整玩家清單 API）
+      if (mode === 'solo') {
+        $players.innerHTML = leaderboard.players.map(p => {
+          const id = p.id;
+          return `
+            <div class="row" style="align-items:center">
+              <span style="min-width: 220px">${p.name}（${p.team || '未分組'}）— 分數：${p.score}</span>
+              <input placeholder="輸入隊伍名（例：A）" data-id="${id}" />
+              <button data-id="${id}" class="btn-assign">指派隊伍</button>
+            </div>
+          `;
+        }).join('');
+
+        document.querySelectorAll('.btn-assign').forEach(btn => {
+          btn.onclick = () => {
+            const pid = btn.getAttribute('data-id');
+            const ipt = document.querySelector(`input[data-id="${pid}"]`);
+            const team = (ipt.value || '').trim();
+            if (!authed) return;
+            socket.emit('admin:assignTeam', { playerId: pid, team });
+          };
+        });
+      } else {
+        $players.innerHTML = '<em>分組模式下：示範簡化，建議先切到個人賽指派隊伍，再切回分組模式。</em>';
+      }
+    });
+  </script>
+</body>
+</html>
